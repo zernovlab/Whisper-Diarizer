@@ -1,0 +1,17 @@
+# --- PyTorch is installed separately, see README.md (CUDA build for RTX 4080) ---
+# torch
+# torchaudio
+
+faster-whisper>=1.0.3
+pyannote.audio>=3.3.2
+# Pinned: PySide6 >=6.9 fails to load on Windows with
+# "DLL load failed while importing QtCore" (Qt6Core.dll requires a
+# versioned icuuc.dll that isn't bundled and doesn't match the OS-provided
+# ICU). 6.7.3 works reliably on Windows without extra setup.
+PySide6==6.7.3
+python-docx>=1.1.2
+numpy>=1.26
+huggingface_hub>=0.25
+# torchaudio (used internally by pyannote.audio) has no working default
+# backend on Windows without this — without it, loading any WAV file fails.
+soundfile>=0.12.1

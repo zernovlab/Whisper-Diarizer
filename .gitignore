@@ -1,0 +1,17 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Project-specific
+output/
+*.wav
+*.log
+
+# Claude Code local session data
+.claude/
