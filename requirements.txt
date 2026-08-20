@@ -15,3 +15,8 @@ huggingface_hub>=0.25
 # torchaudio (used internally by pyannote.audio) has no working default
 # backend on Windows without this — without it, loading any WAV file fails.
 soundfile>=0.12.1
+# torch 2.6.0 requires exactly this sympy version internally (torch._dynamo).
+# Since torch itself is installed with --no-deps (see README), pip never
+# enforces this pin on its own — a newer sympy pulled in by another package
+# breaks torch with "ImportError: cannot import name 'LazyExceptionMessage'".
+sympy==1.13.1
