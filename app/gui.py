@@ -94,7 +94,7 @@ class QueueWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Распознавание речи со спикерами (Whisper)")
+        self.setWindowTitle("Писарь — распознавание речи со спикерами")
         self.resize(950, 900)
 
         self.cfg = load_config()
