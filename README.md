@@ -204,3 +204,24 @@ cuDNN. При одновременной работе с GPU в одном пр�
 [Токен Hugging Face](#токен-hugging-face-для-диаризации)), либо токен и
 аккаунт, где принята лицензия, не совпадают. Проверьте `check_hf_access.py`.
 </details>
+
+<details>
+<summary><code>Library cublas64_12.dll is not found or cannot be loaded</code></summary>
+
+На компьютере есть NVIDIA GPU и драйвер, но нет самого CUDA Toolkit — только
+драйвер не даёт `ctranslate2` (движок Whisper) библиотек для GPU-вычислений.
+Приложение само перехватывает эту ошибку и переключается на CPU (медленнее,
+но работает). Чтобы получить ускорение на GPU — поставьте
+[CUDA Toolkit 12.x](https://developer.nvidia.com/cuda-downloads) с сайта
+NVIDIA.
+</details>
+
+<details>
+<summary><code>Pipeline.from_pretrained() got an unexpected keyword argument</code>
+или <code>hf_hub_download() got an unexpected keyword argument</code></summary>
+
+Несовместимые версии `pyannote.audio` и `huggingface_hub` — старый
+`pyannote.audio` (&lt;4.0) дёргает устаревший `use_auth_token`, а новый
+`huggingface_hub` его уже не принимает. Обновите пакет:
+`pip install --upgrade "pyannote.audio>=4.0.0"`.
+</details>
