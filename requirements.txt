@@ -3,7 +3,11 @@
 # torchaudio
 
 faster-whisper>=1.0.3
-pyannote.audio>=3.3.2
+# Pinned floor: pyannote.audio <4.0 calls hf_hub_download(use_auth_token=...)
+# internally, which recent huggingface_hub versions (>=1.0) no longer accept
+# ("TypeError: hf_hub_download() got an unexpected keyword argument
+# 'use_auth_token'"). 4.0+ uses the current `token` kwarg throughout.
+pyannote.audio>=4.0.0
 # Pinned: PySide6 >=6.9 fails to load on Windows with
 # "DLL load failed while importing QtCore" (Qt6Core.dll requires a
 # versioned icuuc.dll that isn't bundled and doesn't match the OS-provided
