@@ -52,13 +52,23 @@ class Diarizer:
                 "Create one at https://huggingface.co/settings/tokens and accept the "
                 "license at https://huggingface.co/pyannote/speaker-diarization-3.1"
             )
+        import inspect
+
         from huggingface_hub.errors import GatedRepoError
         from pyannote.audio import Pipeline
         import torch
 
+        # pyannote.audio renamed this kwarg from use_auth_token -> token at
+        # some point; support both since installed versions vary by machine.
+        token_kwarg = (
+            "token"
+            if "token" in inspect.signature(Pipeline.from_pretrained).parameters
+            else "use_auth_token"
+        )
+
         self.device = resolve_device(device)
         try:
-            self.pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, token=hf_token)
+            self.pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, **{token_kwarg: hf_token})
         except GatedRepoError as exc:
             repo = _extract_gated_repo(exc)
             repo_line = f"https://huggingface.co/{repo}" if repo else "(см. ссылку в тексте ошибки ниже)"
