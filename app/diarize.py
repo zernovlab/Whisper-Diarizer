@@ -5,9 +5,18 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from app.transcribe import resolve_device
-
 DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
+
+
+def resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    # Uses torch (not transcribe.resolve_device's ctranslate2 check): this
+    # runs in the diarization subprocess, which already needs torch anyway,
+    # and must never import ctranslate2 — see worker_transcribe.py.
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 # pyannote/speaker-diarization-3.1 internally pulls in extra gated repos
 # (segmentation-3.0, and depending on the pyannote.audio version also
