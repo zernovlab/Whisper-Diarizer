@@ -1,13 +1,20 @@
-# --- PyTorch is installed separately, see README.md (CUDA build for RTX 4080) ---
-# torch
-# torchaudio
+# Installed from PyPI this is the CPU build. GPU users swap in the CUDA build of
+# the SAME version with one extra command (setup.bat does it; see README) -
+# the swap is safe to re-run `pip install -r` over, because torch==2.8.0 is
+# satisfied by 2.8.0+cu126 too.
+#
+# 2.8.0 exactly: pyannote.audio 4.x requires torch>=2.8.0, and staying on that
+# one version keeps every dependency range (sympy, lightning, ...) mutually
+# satisfiable. An older torch + a pinned sympy made pip's resolver backtrack
+# for ages and fail - that was the "setup.bat gets confused" report.
+torch==2.8.0
+torchaudio==2.8.0
 
 faster-whisper>=1.0.3
-# Pinned floor: pyannote.audio <4.0 calls hf_hub_download(use_auth_token=...)
-# internally, which recent huggingface_hub versions (>=1.0) no longer accept
-# ("TypeError: hf_hub_download() got an unexpected keyword argument
-# 'use_auth_token'"). 4.0+ uses the current `token` kwarg throughout.
-pyannote.audio>=4.0.0
+# 4.x calls the current huggingface_hub API (`token`); 3.x calls hf_hub_download(
+# use_auth_token=...), which huggingface_hub >=1.0 removed. Capped at <4.1
+# because the next minor may want a newer torch than the one pinned above.
+pyannote.audio>=4.0.0,<4.1
 # Pinned: PySide6 >=6.9 fails to load on Windows with
 # "DLL load failed while importing QtCore" (Qt6Core.dll requires a
 # versioned icuuc.dll that isn't bundled and doesn't match the OS-provided
@@ -15,12 +22,7 @@ pyannote.audio>=4.0.0
 PySide6==6.7.3
 python-docx>=1.1.2
 numpy>=1.26
-huggingface_hub>=0.25
+huggingface_hub>=0.28.1
 # torchaudio (used internally by pyannote.audio) has no working default
-# backend on Windows without this — without it, loading any WAV file fails.
+# backend on Windows without this - without it, loading any WAV file fails.
 soundfile>=0.12.1
-# torch 2.6.0 requires exactly this sympy version internally (torch._dynamo).
-# Since torch itself is installed with --no-deps (see README), pip never
-# enforces this pin on its own — a newer sympy pulled in by another package
-# breaks torch with "ImportError: cannot import name 'LazyExceptionMessage'".
-sympy==1.13.1

@@ -33,7 +33,10 @@ from app.config import load_config, save_config
 from app.merge import Chunk
 from app.pipeline import PipelineConfig, run_pipeline
 
-MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3", "distil-large-v3"]
+# No "distil-large-v3" here: it is English-only, and for Russian speech it
+# produces garbage rather than a faster large-v3.
+MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+DEFAULT_MODEL = "large-v3"
 LANGUAGES = [
     ("auto", "Автоопределение"),
     ("ru", "Русский"),
@@ -44,6 +47,20 @@ LANGUAGES = [
     ("es", "Español"),
 ]
 DEVICES = ["auto", "cuda", "cpu"]
+# (key, button label). Two different SRTs on purpose: see the tooltips below.
+EXPORT_BUTTONS = [
+    ("TXT", "Экспорт TXT"),
+    ("SRT", "SRT: реплики"),
+    ("SUBS", "Субтитры SRT (Premiere)"),
+    ("PRJSON", "Транскрипт Premiere (JSON)"),
+    ("JSON", "Экспорт JSON"),
+    ("DOCX", "Экспорт DOCX"),
+]
+EXPORT_TITLES = {
+    "SRT": "SRT по репликам",
+    "SUBS": "субтитры SRT",
+    "PRJSON": "транскрипт для Premiere (JSON)",
+}
 SPEAKER_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#d97706", "#0891b2", "#be185d", "#4b5563"]
 
 STATUS_PENDING = "ожидает"
@@ -246,13 +263,35 @@ class MainWindow(QMainWindow):
 
         export_row = QHBoxLayout()
         self.export_buttons = {}
-        for fmt in ("TXT", "SRT", "JSON", "DOCX"):
-            btn = QPushButton(f"Экспорт {fmt}")
+        for fmt, label in EXPORT_BUTTONS:
+            btn = QPushButton(label)
             btn.setEnabled(False)
             btn.clicked.connect(lambda _checked, f=fmt: self.on_export(f))
             export_row.addWidget(btn)
             self.export_buttons[fmt] = btn
+        self.export_buttons["SUBS"].setToolTip(
+            "Короткие реплики (до двух строк по ~42 символа) — SRT с кодировкой UTF-8 BOM,\n"
+            "который Premiere Pro читает без искажений кириллицы. В Premiere: File → Import,\n"
+            "затем перетащить файл на таймлайн (или Text → Captions → Import captions from file)."
+        )
+        self.export_buttons["PRJSON"].setToolTip(
+            "Транскрипт с таймкодом на каждое слово и именами спикеров — для текстового\n"
+            "монтажа в Premiere Pro. Откройте клип в Source Monitor, затем\n"
+            "Text → Transcript → ⋯ → Import → Import Static Transcript и выберите файл.\n"
+            "Нужна свежая версия Premiere (функция появилась в 2025 году)."
+        )
+        self.export_buttons["SRT"].setToolTip(
+            "Одна запись на реплику целиком, с именем спикера — для чтения расшифровки\n"
+            "на таймлайне. Для экранных субтитров используйте «Субтитры SRT»."
+        )
         layout.addLayout(export_row)
+
+        self.subs_speakers_checkbox = QCheckBox("Писать имена спикеров в субтитрах")
+        self.subs_speakers_checkbox.setToolTip(
+            "Перед первой репликой каждого выступающего добавляется «Имя: ».\n"
+            "Выключено — чистый текст без имён."
+        )
+        layout.addWidget(self.subs_speakers_checkbox)
 
         self.setCentralWidget(root)
         self._update_speaker_fields_visibility()
@@ -273,7 +312,11 @@ class MainWindow(QMainWindow):
             self.range_row_widget.setVisible(False)
 
     def _load_settings_into_ui(self):
-        self.model_combo.setCurrentText(self.cfg.get("model_size", "large-v3"))
+        # A model saved by an older version (e.g. the removed distil-large-v3)
+        # is not in the list any more; setCurrentText would silently leave the
+        # combo on its first entry, "tiny" — the worst possible fallback.
+        saved_model = self.cfg.get("model_size", DEFAULT_MODEL)
+        self.model_combo.setCurrentText(saved_model if saved_model in MODEL_SIZES else DEFAULT_MODEL)
         self.device_combo.setCurrentText(self.cfg.get("device", "auto"))
         lang_idx = self.lang_combo.findData(self.cfg.get("language", "auto"))
         if lang_idx >= 0:
@@ -549,11 +592,17 @@ class MainWindow(QMainWindow):
         item = self.queue[self.current_item_index]
         if not item.chunks:
             return
-        ext_map = {"TXT": "txt", "SRT": "srt", "JSON": "json", "DOCX": "docx"}
+        ext_map = {"TXT": "txt", "SRT": "srt", "SUBS": "srt", "PRJSON": "json", "JSON": "json", "DOCX": "docx"}
         ext = ext_map[fmt]
         base_name = Path(item.path).stem
-        default_name = str(Path(self.cfg.get("last_output_dir", ".")) / f"{base_name}.{ext}")
-        path, _ = QFileDialog.getSaveFileName(self, f"Сохранить как {fmt}", default_name, f"*.{ext}")
+        # Subtitles keep the bare video name (that is what an editor looks for);
+        # the other look-alikes get a suffix so they can never overwrite each
+        # other: two SRT flavours, and two different JSON layouts.
+        suffix = {"SRT": "_transcript", "PRJSON": "_premiere"}.get(fmt, "")
+        file_name = f"{base_name}{suffix}.{ext}"
+        default_name = str(Path(self.cfg.get("last_output_dir", ".")) / file_name)
+        title = EXPORT_TITLES.get(fmt, fmt)
+        path, _ = QFileDialog.getSaveFileName(self, f"Сохранить: {title}", default_name, f"*.{ext}")
         if not path:
             return
         try:
@@ -561,6 +610,12 @@ class MainWindow(QMainWindow):
                 export.to_txt(item.chunks, path)
             elif fmt == "SRT":
                 export.to_srt(item.chunks, path)
+            elif fmt == "SUBS":
+                export.to_subtitles_srt(
+                    item.chunks, path, include_speakers=self.subs_speakers_checkbox.isChecked()
+                )
+            elif fmt == "PRJSON":
+                export.to_premiere_json(item.chunks, path)
             elif fmt == "JSON":
                 export.to_json(item.chunks, path)
             elif fmt == "DOCX":

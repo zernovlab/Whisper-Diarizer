@@ -15,3 +15,6 @@ output/
 
 # Claude Code local session data
 .claude/
+
+# Installer log
+setup.log

@@ -54,7 +54,12 @@ class _ProgressBridge:
 
 
 class Diarizer:
-    def __init__(self, hf_token: str, device: str = "auto"):
+    def __init__(
+        self,
+        hf_token: str,
+        device: str = "auto",
+        on_status: Optional[Callable[[str], None]] = None,
+    ):
         if not hf_token:
             raise ValueError(
                 "Hugging Face token is required for pyannote.audio. "
@@ -75,9 +80,18 @@ class Diarizer:
             else "use_auth_token"
         )
 
+        from app.hub_utils import call_with_network_retries
+
         self.device = resolve_device(device)
         try:
-            self.pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, **{token_kwarg: hf_token})
+            # Several small repos are fetched here; a dropped connection on
+            # any of them used to abort the whole run. GatedRepoError is not a
+            # network error, so it still surfaces immediately (handled below).
+            self.pipeline = call_with_network_retries(
+                lambda: Pipeline.from_pretrained(DIARIZATION_MODEL, **{token_kwarg: hf_token}),
+                what="модель диаризации",
+                on_status=on_status,
+            )
         except GatedRepoError as exc:
             repo = _extract_gated_repo(exc)
             repo_line = f"https://huggingface.co/{repo}" if repo else "(см. ссылку в тексте ошибки ниже)"

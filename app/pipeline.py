@@ -8,6 +8,7 @@ cuDNN copies).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -38,7 +39,14 @@ class PipelineConfig:
     max_speakers: Optional[int] = None
 
 
-def _run_worker(module: str, config: dict, tmp_dir: str, on_progress_line: Callable[[str], None]) -> dict:
+def _run_worker(
+    module: str,
+    config: dict,
+    tmp_dir: str,
+    on_progress_line: Callable[[str], None],
+    on_status_line: Optional[Callable[[str], None]] = None,
+    on_download_line: Optional[Callable[[str], None]] = None,
+) -> dict:
     name = module.split(".")[-1]
     cfg_path = Path(tmp_dir) / f"{name}_config.json"
     result_path = Path(tmp_dir) / f"{name}_result.json"
@@ -46,21 +54,32 @@ def _run_worker(module: str, config: dict, tmp_dir: str, on_progress_line: Calla
 
     cfg_path.write_text(json.dumps(config), encoding="utf-8")
 
+    # A piped Python child encodes stdout/stderr with the Windows locale code
+    # page (cp1251 on a Russian system), but we decode as UTF-8 — so any
+    # Cyrillic in a STATUS line or an error message would arrive as garbage.
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+
     with open(stderr_path, "w", encoding="utf-8") as stderr_file:
         proc = subprocess.Popen(
             [sys.executable, "-m", module, str(cfg_path), str(result_path)],
             cwd=str(PROJECT_ROOT),
+            env=env,
             stdout=subprocess.PIPE,
             stderr=stderr_file,
             text=True,
             bufsize=1,
             encoding="utf-8",
+            errors="replace",
         )
         assert proc.stdout is not None
         for line in proc.stdout:
             line = line.strip()
             if line.startswith("PROGRESS:"):
                 on_progress_line(line[len("PROGRESS:"):])
+            elif line.startswith("STATUS:") and on_status_line:
+                on_status_line(line[len("STATUS:"):])
+            elif line.startswith("DOWNLOAD:") and on_download_line:
+                on_download_line(line[len("DOWNLOAD:"):])
         proc.wait()
 
     if proc.returncode != 0:
@@ -70,9 +89,19 @@ def _run_worker(module: str, config: dict, tmp_dir: str, on_progress_line: Calla
                 "(процесс завершился без сообщения об ошибке — вероятно, аварийно "
                 "упал на уровне ОС, например из-за нехватки видеопамяти)"
             )
-        raise RuntimeError(f"{module} завершился с ошибкой (код {proc.returncode}):\n{stderr_text[-3000:]}")
+        # Lead with the exception itself: the traceback above it is long, and
+        # trimming it to the last N characters used to cut the useful part.
+        last_line = next((ln for ln in reversed(stderr_text.splitlines()) if ln.strip()), "")
+        raise RuntimeError(
+            f"{module} завершился с ошибкой (код {proc.returncode}): {last_line.strip()}\n\n"
+            f"{stderr_text[-3000:]}"
+        )
 
     return json.loads(result_path.read_text(encoding="utf-8"))
+
+
+def _format_bytes(n: float) -> str:
+    return f"{n / 1e9:.1f} ГБ" if n >= 1e9 else f"{n / 1e6:.0f} МБ"
 
 
 def run_pipeline(config: PipelineConfig, progress: Optional[ProgressFn] = None) -> list[Chunk]:
@@ -95,6 +124,22 @@ def run_pipeline(config: PipelineConfig, progress: Optional[ProgressFn] = None) 
             frac = float(payload)
             report(10 + int(frac * 45), "Распознавание речи...")
 
+        def on_transcribe_status(text: str):
+            report(6, text)
+
+        def on_model_download(payload: str):
+            done_s, _, total_s = payload.partition(":")
+            done, total = float(done_s), float(total_s or 0)
+            if total <= 0:
+                report(6, f"Скачивание модели Whisper ({config.model_size})...")
+                return
+            frac = min(done / total, 1.0)
+            report(
+                6 + int(frac * 4),
+                f"Скачивание модели Whisper ({config.model_size}): {frac * 100:.0f}% "
+                f"({_format_bytes(done)} из {_format_bytes(total)})",
+            )
+
         transcribe_result = _run_worker(
             "app.worker_transcribe",
             {
@@ -106,6 +151,8 @@ def run_pipeline(config: PipelineConfig, progress: Optional[ProgressFn] = None) 
             },
             tmp,
             on_transcribe_line,
+            on_status_line=on_transcribe_status,
+            on_download_line=on_model_download,
         )
         segments = [
             Segment(start=s["start"], end=s["end"], text=s["text"], words=[Word(**w) for w in s["words"]])
@@ -138,6 +185,7 @@ def run_pipeline(config: PipelineConfig, progress: Optional[ProgressFn] = None) 
                 },
                 tmp,
                 on_diarize_line,
+                on_status_line=lambda text: report(56, text),
             )
             turns = [SpeakerTurn(**t) for t in diarize_result["turns"]]
             report(90, f"Диаризация завершена ({len(set(t.speaker for t in turns))} спикеров)")
@@ -148,6 +196,8 @@ def run_pipeline(config: PipelineConfig, progress: Optional[ProgressFn] = None) 
         report(92, "Объединение транскрипта со спикерами...")
         chunks = build_chunks(segments, turns)
         chunks = relabel_speakers(chunks)
+        for chunk in chunks:
+            chunk.language = transcribe_result["language"]
         report(100, "Готово")
 
         return chunks

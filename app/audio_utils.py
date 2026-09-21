@@ -10,10 +10,17 @@ class FFmpegError(RuntimeError):
     pass
 
 
+# ffmpeg writes UTF-8 (paths and messages included), but text=True alone
+# decodes with the Windows locale code page (cp1251 on a Russian system).
+# A Cyrillic folder name then raised UnicodeDecodeError inside subprocess's
+# reader thread, which left result.stderr as None and hid the real error.
+_TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
+
 def convert_to_wav(input_path: str, output_path: str, sample_rate: int = 16000) -> None:
     """Extract/convert any audio or video file into mono PCM16 WAV via ffmpeg."""
     cmd = [
-        "ffmpeg", "-y",
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-i", input_path,
         "-vn",
         "-ac", "1",
@@ -21,7 +28,7 @@ def convert_to_wav(input_path: str, output_path: str, sample_rate: int = 16000) 
         "-acodec", "pcm_s16le",
         output_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, **_TEXT)
     if result.returncode != 0:
         raise FFmpegError(f"ffmpeg failed converting {input_path}:\n{result.stderr[-2000:]}")
 
@@ -33,7 +40,7 @@ def get_duration_seconds(input_path: str) -> float:
         "-of", "json",
         input_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, **_TEXT)
     if result.returncode != 0:
         raise FFmpegError(f"ffprobe failed on {input_path}:\n{result.stderr[-2000:]}")
     data = json.loads(result.stdout)

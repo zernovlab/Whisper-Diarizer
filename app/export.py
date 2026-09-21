@@ -1,4 +1,4 @@
-"""Exporters for the merged transcript: TXT, SRT, JSON, DOCX."""
+"""Exporters for the merged transcript: TXT, SRT (utterances), SRT (subtitles), JSON, DOCX."""
 from __future__ import annotations
 
 import json
@@ -16,12 +16,26 @@ def _fmt_hms(seconds: float) -> str:
 
 
 def _fmt_srt_time(seconds: float) -> str:
-    seconds = max(0.0, seconds)
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int(round((seconds - int(seconds)) * 1000))
+    # Whole milliseconds first, then split: rounding only the fractional part
+    # could yield ",1000" (e.g. 2.9996 s) — an invalid time code.
+    total_ms = int(round(max(0.0, seconds) * 1000))
+    h, rest = divmod(total_ms, 3_600_000)
+    m, rest = divmod(rest, 60_000)
+    s, ms = divmod(rest, 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _write_srt(path: str, cues: list[tuple[float, float, str]]) -> None:
+    """UTF-8 *with BOM* and CRLF line breaks, on purpose: Premiere Pro reads a
+    BOM-less UTF-8 SRT wrongly (Cyrillic turns into garbage) and expects
+    Windows line endings even on a Mac. Other editors and players
+    (DaVinci Resolve, VLC, ffmpeg) accept the BOM without complaint."""
+    blocks = []
+    for i, (start, end, text) in enumerate(cues, start=1):
+        body = "\r\n".join(text.split("\n"))
+        blocks.append(f"{i}\r\n{_fmt_srt_time(start)} --> {_fmt_srt_time(end)}\r\n{body}\r\n")
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        f.write("\r\n".join(blocks))
 
 
 def to_txt(chunks: list[Chunk], path: str) -> None:
@@ -30,12 +44,19 @@ def to_txt(chunks: list[Chunk], path: str) -> None:
 
 
 def to_srt(chunks: list[Chunk], path: str) -> None:
-    blocks = []
-    for i, c in enumerate(chunks, start=1):
-        blocks.append(
-            f"{i}\n{_fmt_srt_time(c.start)} --> {_fmt_srt_time(c.end)}\n{c.speaker}: {c.text}\n"
-        )
-    Path(path).write_text("\n".join(blocks), encoding="utf-8")
+    """One cue per utterance, speaker name in front. Meant for reading the
+    transcript on a timeline, not as on-screen subtitles — see
+    to_subtitles_srt for that."""
+    _write_srt(path, [(c.start, c.end, f"{c.speaker}: {c.text}") for c in chunks])
+
+
+def to_subtitles_srt(chunks: list[Chunk], path: str, include_speakers: bool = False) -> None:
+    """Real subtitles: short cues (two lines of ~42 characters at most),
+    ready to import into Premiere Pro as a caption track."""
+    from app.subtitles import build_subtitle_cues
+
+    cues = build_subtitle_cues(chunks, include_speakers=include_speakers)
+    _write_srt(path, [(c.start, c.end, c.text) for c in cues])
 
 
 def to_json(chunks: list[Chunk], path: str) -> None:
@@ -44,6 +65,17 @@ def to_json(chunks: list[Chunk], path: str) -> None:
         for c in chunks
     ]
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def to_premiere_json(chunks: list[Chunk], path: str) -> None:
+    """Word-timed transcript for Premiere Pro's "Import Static Transcript"
+    (see premiere.py). Pure ASCII (\\uXXXX escapes) so no reader can
+    misdetect the encoding of the Cyrillic text."""
+    from app.premiere import build_premiere_transcript
+
+    data = build_premiere_transcript(chunks)
+    with open(path, "w", encoding="ascii", newline="\n") as f:
+        json.dump(data, f, ensure_ascii=True, indent=2, sort_keys=True)
 
 
 def to_docx(chunks: list[Chunk], path: str) -> None:

@@ -8,7 +8,10 @@ exception, the whole process just dies. Running transcription and
 diarization as separate subprocesses avoids the conflict entirely.
 
 Usage: python -m app.worker_transcribe <config.json> <result.json>
-Progress is reported on stdout as lines "PROGRESS:<0..1>".
+Lines on stdout (parsed by pipeline.py):
+  PROGRESS:<0..1>             transcription progress
+  DOWNLOAD:<done>:<total>     model download progress, in bytes
+  STATUS:<text>               a message to show the user (e.g. a retry)
 """
 from __future__ import annotations
 
@@ -18,12 +21,29 @@ from dataclasses import asdict
 
 
 def main():
+    # Hub timeouts are read at import time, so this must precede any
+    # huggingface_hub import (transcribe.py -> hub_utils.py -> faster_whisper).
+    from app.hub_utils import configure_hub_env
+
+    configure_hub_env()
+
     config_path, result_path = sys.argv[1], sys.argv[2]
     config = json.loads(open(config_path, encoding="utf-8").read())
 
     from app.transcribe import Transcriber
 
-    transcriber = Transcriber(model_size=config["model_size"], device=config["device"])
+    def on_status(text: str):
+        print(f"STATUS:{text}", flush=True)
+
+    def on_download(done: int, total: int):
+        print(f"DOWNLOAD:{done}:{total}", flush=True)
+
+    transcriber = Transcriber(
+        model_size=config["model_size"],
+        device=config["device"],
+        on_status=on_status,
+        on_download=on_download,
+    )
 
     def on_progress(frac: float):
         print(f"PROGRESS:{frac}", flush=True)

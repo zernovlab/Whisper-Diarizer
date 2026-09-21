@@ -22,7 +22,7 @@ UNKNOWN_SPEAKER = "SPEAKER_?"
 
 
 @dataclass
-class _FlatWord:
+class TimedWord:
     start: float
     end: float
     text: str
@@ -34,21 +34,27 @@ class Chunk:
     end: float
     speaker: str
     text: str
+    # Word timings are kept so exports that need finer cuts than a whole
+    # utterance (subtitles, see subtitles.py) can split at real word boundaries.
+    words: list[TimedWord] = field(default_factory=list)
+    # Language Whisper recognised the file in (ISO 639-1, e.g. "ru"); set by
+    # the pipeline. Needed by exports that must declare it (Premiere transcript).
+    language: str = ""
 
 
-def _flatten_words(segments: list[Segment]) -> list[_FlatWord]:
-    words: list[_FlatWord] = []
+def _flatten_words(segments: list[Segment]) -> list[TimedWord]:
+    words: list[TimedWord] = []
     for seg in segments:
         if seg.words:
             for w in seg.words:
                 if w.text:
-                    words.append(_FlatWord(start=w.start, end=w.end, text=w.text))
+                    words.append(TimedWord(start=w.start, end=w.end, text=w.text))
         elif seg.text:
-            words.append(_FlatWord(start=seg.start, end=seg.end, text=seg.text))
+            words.append(TimedWord(start=seg.start, end=seg.end, text=seg.text))
     return words
 
 
-def _assign_speakers(words: list[_FlatWord], turns: list[SpeakerTurn]) -> list[str]:
+def _assign_speakers(words: list[TimedWord], turns: list[SpeakerTurn]) -> list[str]:
     if not turns:
         return [UNKNOWN_SPEAKER] * len(words)
 
@@ -92,6 +98,7 @@ def build_chunks(segments: list[Segment], turns: list[SpeakerTurn]) -> list[Chun
 
     chunks: list[Chunk] = []
     cur_words: list[str] = []
+    cur_objs: list[TimedWord] = []
     cur_start = words[0].start
     cur_end = words[0].end
     cur_speaker = speakers[0]
@@ -101,7 +108,9 @@ def build_chunks(segments: list[Segment], turns: list[SpeakerTurn]) -> list[Chun
         if cur_words:
             text = " ".join(cur_words).strip()
             if text:
-                chunks.append(Chunk(start=cur_start, end=cur_end, speaker=cur_speaker, text=text))
+                chunks.append(
+                    Chunk(start=cur_start, end=cur_end, speaker=cur_speaker, text=text, words=list(cur_objs))
+                )
 
     for i, w in enumerate(words):
         speaker = speakers[i]
@@ -119,10 +128,12 @@ def build_chunks(segments: list[Segment], turns: list[SpeakerTurn]) -> list[Chun
         if should_break:
             flush()
             cur_words = []
+            cur_objs = []
             cur_start = w.start
             cur_speaker = speaker
 
         cur_words.append(w.text)
+        cur_objs.append(w)
         cur_end = w.end
         prev_word_end = w.end
 
@@ -137,4 +148,10 @@ def relabel_speakers(chunks: list[Chunk]) -> list[Chunk]:
     for c in chunks:
         if c.speaker not in mapping:
             mapping[c.speaker] = f"Спикер {len(mapping) + 1}"
-    return [Chunk(start=c.start, end=c.end, speaker=mapping[c.speaker], text=c.text) for c in chunks]
+    return [
+        Chunk(
+            start=c.start, end=c.end, speaker=mapping[c.speaker], text=c.text,
+            words=c.words, language=c.language,
+        )
+        for c in chunks
+    ]

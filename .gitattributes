@@ -1,0 +1,5 @@
+# Windows batch files must keep CRLF line endings, including in the ZIP that
+# GitHub's "Download ZIP" produces - with LF-only endings cmd.exe can fail to
+# find goto labels. Shell scripts are the opposite: LF only.
+*.bat text eol=crlf
+*.sh  text eol=lf

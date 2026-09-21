@@ -3,7 +3,9 @@
 See worker_transcribe.py for why this runs out-of-process.
 
 Usage: python -m app.worker_diarize <config.json> <result.json>
-Progress is reported on stdout as lines "PROGRESS:<step_name>:<0..1 or ->".
+Lines on stdout (parsed by pipeline.py):
+  PROGRESS:<step_name>:<0..1 or ->   diarization progress
+  STATUS:<text>                      a message to show the user (e.g. a retry)
 """
 from __future__ import annotations
 
@@ -13,12 +15,20 @@ from dataclasses import asdict
 
 
 def main():
+    # Hub timeouts are read at import time — must precede any huggingface_hub import.
+    from app.hub_utils import configure_hub_env
+
+    configure_hub_env()
+
     config_path, result_path = sys.argv[1], sys.argv[2]
     config = json.loads(open(config_path, encoding="utf-8").read())
 
     from app.diarize import Diarizer
 
-    diarizer = Diarizer(hf_token=config["hf_token"], device=config["device"])
+    def on_status(text: str):
+        print(f"STATUS:{text}", flush=True)
+
+    diarizer = Diarizer(hf_token=config["hf_token"], device=config["device"], on_status=on_status)
 
     def on_progress(step_name: str, frac):
         frac_str = f"{frac}" if frac is not None else "-"
